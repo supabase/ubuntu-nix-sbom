@@ -73,7 +73,24 @@ jobs:
         run: |
           ls -lh ubuntu-sbom-arm64
           file ubuntu-sbom-arm64 2>/dev/null || echo "file command not available"
-          echo "size=$(stat -c%s ubuntu-sbom-arm64 | numfmt --to=iec-i --suffix=B --format="%.2f")" >> $GITHUB_OUTPUT
+
+          # Calculate checksum
+          sha256sum ubuntu-sbom-arm64 > ubuntu-sbom-arm64.sha256
+          echo "Checksum:"
+          cat ubuntu-sbom-arm64.sha256
+
+          # Get size
+          BYTE_SIZE=$(stat -c%s ubuntu-sbom-arm64)
+          HUMAN_SIZE=$(numfmt --to=iec-i --suffix=B --format="%.2f" <<< "$BYTE_SIZE")
+          echo "size=$HUMAN_SIZE" >> $GITHUB_OUTPUT
+          echo "checksum=$(cut -d' ' -f1 ubuntu-sbom-arm64.sha256)" >> $GITHUB_OUTPUT
+
+          # Final verification before upload
+          echo "Final verification - File size: $BYTE_SIZE bytes"
+          if [ "$BYTE_SIZE" -eq 0 ]; then
+            echo "ERROR: Binary is 0 bytes!"
+            exit 1
+          fi
 
       - name: Determine version
         id: version
@@ -116,53 +133,79 @@ jobs:
 
           echo "changes=$CHANGES" >> $GITHUB_OUTPUT
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.new_version }}
-          name: Release ${{ steps.version.outputs.new_version }}
-          body: |
-            # Ubuntu SBOM Generator ${{ steps.version.outputs.new_version }}
-
-            ## What's Changed
-            ${{ steps.changelog.outputs.changes }}
-
-            ## Download
-
-            ### ARM64 (aarch64) Static Binary
-
-            **Size:** ${{ steps.binary-info.outputs.size }}
-
-            Download and run on any ARM64 Linux system (Ubuntu, Debian, etc.):
-
-            ```bash
-            # Download the binary
-            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.new_version }}/ubuntu-sbom-arm64
-
-            # Make it executable
-            chmod +x ubuntu-sbom-arm64
-
-            # Run it
-            ./ubuntu-sbom-arm64 --output my-sbom.json
-            ```
-
-            ## Features
-
-            - Generates SPDX 2.3 compliant SBOMs for Ubuntu/Debian packages
-            - Statically linked - no dependencies required
-            - Includes license detection from copyright files
-            - Optional file-level checksums with `--include-files`
-            - Progress indicators with `--progress`
-
-            ## Full Changelog
-
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.version.outputs.latest_tag }}...${{ steps.version.outputs.new_version }}
-          files: |
-            ubuntu-sbom-arm64
-          draft: false
-          prerelease: false
+      - name: Create Release with GitHub CLI
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Verify binary exists and is not empty before creating release
+          if [ ! -f ubuntu-sbom-arm64 ]; then
+            echo "ERROR: ubuntu-sbom-arm64 not found!"
+            exit 1
+          fi
+
+          BINARY_SIZE=$(stat -c%s ubuntu-sbom-arm64)
+          if [ "$BINARY_SIZE" -eq 0 ]; then
+            echo "ERROR: Binary is 0 bytes before upload!"
+            exit 1
+          fi
+
+          echo "Creating release with binary of size: $BINARY_SIZE bytes"
+
+          # Create release notes
+          cat > release-notes.md <<'EOF'
+          # Ubuntu SBOM Generator ${{ steps.version.outputs.new_version }}
+
+          ## What's Changed
+          ${{ steps.changelog.outputs.changes }}
+
+          ## Download
+
+          ### ARM64 (aarch64) Static Binary
+
+          **Size:** ${{ steps.binary-info.outputs.size }}
+          **SHA256:** ${{ steps.binary-info.outputs.checksum }}
+
+          Download and run on any ARM64 Linux system (Ubuntu, Debian, etc.):
+
+          ```bash
+          # Download the binary
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.new_version }}/ubuntu-sbom-arm64
+
+          # Verify checksum (optional but recommended)
+          echo "${{ steps.binary-info.outputs.checksum }}  ubuntu-sbom-arm64" | sha256sum -c
+
+          # Make it executable
+          chmod +x ubuntu-sbom-arm64
+
+          # Run it
+          ./ubuntu-sbom-arm64 --output my-sbom.json
+          ```
+
+          ## Features
+
+          - Generates SPDX 2.3 compliant SBOMs for Ubuntu/Debian packages
+          - Statically linked - no dependencies required
+          - Includes license detection from copyright files
+          - Optional file-level checksums with `--include-files`
+          - Progress indicators with `--progress`
+
+          ## Full Changelog
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.version.outputs.latest_tag }}...${{ steps.version.outputs.new_version }}
+          EOF
+
+          # Create the release and upload the binary
+          gh release create "${{ steps.version.outputs.new_version }}" \
+            ubuntu-sbom-arm64#ubuntu-sbom-arm64 \
+            ubuntu-sbom-arm64.sha256#ubuntu-sbom-arm64.sha256 \
+            --title "Release ${{ steps.version.outputs.new_version }}" \
+            --notes-file release-notes.md
+
+          echo "Release created successfully!"
+
+          # Verify upload by checking release assets
+          echo "Verifying uploaded assets..."
+          gh release view "${{ steps.version.outputs.new_version }}" --json assets --jq '.assets[] | "\(.name): \(.size) bytes"'
 
       - name: Release Summary
         run: |
