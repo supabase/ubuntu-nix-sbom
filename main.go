@@ -340,33 +340,88 @@ func normalizeLicense(license string) string {
 	// Map common license strings to SPDX identifiers
 	license = strings.TrimSpace(license)
 
-	replacements := map[string]string{
-		"GPL-2":     "GPL-2.0-only",
-		"GPL-2+":    "GPL-2.0-or-later",
-		"GPL-3":     "GPL-3.0-only",
-		"GPL-3+":    "GPL-3.0-or-later",
-		"LGPL-2":    "LGPL-2.0-only",
-		"LGPL-2+":   "LGPL-2.0-or-later",
-		"LGPL-2.1":  "LGPL-2.1-only",
-		"LGPL-2.1+": "LGPL-2.1-or-later",
-		"LGPL-3":    "LGPL-3.0-only",
-		"LGPL-3+":   "LGPL-3.0-or-later",
-		"Apache-2":  "Apache-2.0",
-		"BSD":       "BSD-3-Clause",
-		"MIT/X11":   "MIT",
-	}
-
-	for old, new := range replacements {
-		if strings.HasPrefix(license, old) {
-			return new
-		}
-	}
-
+	// If empty, return NOASSERTION
 	if license == "" {
 		return "NOASSERTION"
 	}
 
-	return license
+	// Normalize to lowercase for case-insensitive matching
+	licenseLower := strings.ToLower(license)
+
+	// Check for known SPDX patterns (case-insensitive)
+	replacements := map[string]string{
+		"gpl-2":        "GPL-2.0-only",
+		"gpl-2+":       "GPL-2.0-or-later",
+		"gpl-3":        "GPL-3.0-only",
+		"gpl-3+":       "GPL-3.0-or-later",
+		"lgpl-2":       "LGPL-2.0-only",
+		"lgpl-2+":      "LGPL-2.0-or-later",
+		"lgpl-2.1":     "LGPL-2.1-only",
+		"lgpl-2.1+":    "LGPL-2.1-or-later",
+		"lgpl-3":       "LGPL-3.0-only",
+		"lgpl-3+":      "LGPL-3.0-or-later",
+		"apache-2":     "Apache-2.0",
+		"bsd":          "BSD-3-Clause",
+		"mit/x11":      "MIT",
+		"expat":        "MIT", // Expat is the MIT license
+		"mit-1":        "MIT",
+		"mit-style":    "MIT",
+		"psf":          "Python-2.0",
+		"public-domain": "NOASSERTION", // Not a license
+		"openldap-2.8": "NOASSERTION",  // Not in SPDX list
+		"hylafax":      "NOASSERTION",  // Not in SPDX list
+	}
+
+	// Check for exact match first (case-insensitive)
+	if mapped, ok := replacements[licenseLower]; ok {
+		return mapped
+	}
+
+	// Check for prefix match (case-insensitive)
+	for old, new := range replacements {
+		if strings.HasPrefix(licenseLower, old) {
+			return new
+		}
+	}
+
+	// Check if it looks like a valid SPDX identifier (only letters, numbers, dots, hyphens)
+	// Valid SPDX IDs don't contain: commas, parentheses, quotes, slashes (except in known patterns), spaces in certain contexts
+	validSPDXPattern := regexp.MustCompile(`^[A-Za-z0-9.\-]+(\s+(AND|OR|WITH)\s+[A-Za-z0-9.\-]+)*$`)
+
+	// If it matches valid SPDX pattern, return it
+	if validSPDXPattern.MatchString(license) {
+		return license
+	}
+
+	// If it contains copyright statements, full sentences, or invalid characters, return NOASSERTION
+	invalidPatterns := []string{
+		"Copyright",
+		"copyright",
+		"Permission is hereby",
+		"The files",
+		"Formerly,",
+		"build-aux",
+		"Portions",
+		"free software",
+		"<",  // Email addresses
+		">",  // Email addresses
+		"'",  // Apostrophes
+		",",  // Commas in descriptions
+	}
+
+	for _, pattern := range invalidPatterns {
+		if strings.Contains(license, pattern) {
+			return "NOASSERTION"
+		}
+	}
+
+	// If license string is longer than 50 chars, it's probably license text, not an identifier
+	if len(license) > 50 {
+		return "NOASSERTION"
+	}
+
+	// Default: if we can't confidently map it, use NOASSERTION
+	return "NOASSERTION"
 }
 
 func sanitizeName(name string) string {

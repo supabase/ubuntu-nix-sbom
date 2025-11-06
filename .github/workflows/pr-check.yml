@@ -53,7 +53,7 @@ jobs:
       - name: Validate SPDX document
         run: |
           echo "Validating SPDX 2.3 JSON document..."
-          pyspdxtools -i test-sbom.spdx.json --validate
+          pyspdxtools -i test-sbom.spdx.json
 
           echo "SPDX validation passed!"
 

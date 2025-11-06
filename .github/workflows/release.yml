@@ -81,7 +81,7 @@ jobs:
           ./ubuntu-sbom-arm64 --output release-test-sbom.spdx.json --progress=false
 
           echo "Validating SPDX 2.3 JSON document..."
-          pyspdxtools -i release-test-sbom.spdx.json --validate
+          pyspdxtools -i release-test-sbom.spdx.json
 
           echo "✓ SPDX validation passed! Binary generates valid SPDX 2.3 documents."
 
