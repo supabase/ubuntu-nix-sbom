@@ -28,15 +28,30 @@ jobs:
 
       - name: Build ARM64 static binary
         run: |
-          nix build .#ubuntu-sbom-static-arm64 -o result-arm64
+          nix build .#ubuntu-sbom-static --print-build-logs -o result-arm64
+          ls -lh result-arm64/bin/
           cp result-arm64/bin/ubuntu-sbom ubuntu-sbom-arm64
           chmod +x ubuntu-sbom-arm64
+          ls -lh ubuntu-sbom-arm64
+          # Verify binary is not empty
+          if [ ! -s ubuntu-sbom-arm64 ]; then
+            echo "ERROR: Binary is empty!"
+            exit 1
+          fi
+
+      - name: Test binary
+        run: |
+          # Test help output
+          ./ubuntu-sbom-arm64 --help
+          # Verify it shows usage
+          ./ubuntu-sbom-arm64 --help 2>&1 | grep -q "Usage of" || (echo "ERROR: Binary doesn't show help!" && exit 1)
+          echo "Binary test passed!"
 
       - name: Get binary info
         id: binary-info
         run: |
           ls -lh ubuntu-sbom-arm64
-          file ubuntu-sbom-arm64
+          file ubuntu-sbom-arm64 2>/dev/null || echo "file command not available"
           echo "size=$(stat -c%s ubuntu-sbom-arm64 | numfmt --to=iec-i --suffix=B --format="%.2f")" >> $GITHUB_OUTPUT
 
       - name: Determine version
