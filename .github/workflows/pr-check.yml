@@ -23,3 +23,61 @@ jobs:
 
       - name: Check formatting
         run: nix fmt -- --fail-on-change
+
+  spdx-validation:
+    name: Validate SPDX Output
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Install SPDX validation tools
+        run: |
+          pip install spdx-tools
+
+      - name: Build Ubuntu SBOM generator
+        run: |
+          nix build .#ubuntu-sbom-generator -o result-ubuntu
+
+      - name: Generate test SBOM
+        run: |
+          # Generate a test SBOM (without file checksums for speed)
+          # Fail fast if generation fails
+          ./result-ubuntu/bin/ubuntu-sbom --output test-sbom.spdx.json --no-progress
+
+      - name: Validate SPDX document
+        run: |
+          echo "Validating SPDX 2.3 JSON document..."
+          pyspdxtools -i test-sbom.spdx.json --validate
+
+          echo "SPDX validation passed!"
+
+      - name: Convert SPDX to other formats (test)
+        run: |
+          echo "Testing SPDX conversion capabilities..."
+
+          # Convert to SPDX tag-value format
+          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx --output-format tag-value
+
+          # Convert to SPDX XML format
+          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx.xml --output-format xml
+
+          # Convert to SPDX YAML format
+          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx.yaml --output-format yaml
+
+          echo "All SPDX format conversions successful!"
+
+      - name: Upload test SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-sbom
+          path: |
+            test-sbom.spdx.json
+            test-sbom.spdx
+            test-sbom.spdx.xml
+            test-sbom.spdx.yaml

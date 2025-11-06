@@ -174,19 +174,27 @@ The project includes GitHub Actions workflows for automated testing and releases
 ### PR Checks
 
 On every pull request to `main`:
-- Runs `nix flake check --all-systems` to validate the flake
-- Checks code formatting with `nix fmt --fail-on-change`
+- **Nix Flake Check**: Runs `nix flake check --all-systems` to validate the flake
+- **Formatting**: Checks code formatting with `nix fmt --fail-on-change`
+- **SPDX Validation**:
+  - Builds the Ubuntu SBOM generator
+  - Generates a test SBOM
+  - Validates the output against SPDX 2.3 specification using `spdx-tools`
+  - Tests conversion to other SPDX formats (tag-value, XML, YAML)
+  - Uploads test SBOM as artifact
 
 ### Automated Releases
 
 On every merge to `main`:
 - Builds the ARM64 static binary on an ARM Linux runner
+- Tests the binary and validates SPDX output
 - Automatically increments the patch version (semver)
 - Creates a GitHub release with:
   - Changelog from commits since last release
   - ARM64 static binary as downloadable asset
-  - Installation instructions
-  - Binary size and checksums
+  - SHA256 checksum file
+  - Installation and verification instructions
+  - Binary size
 
 The release workflow uses semantic versioning (e.g., v1.2.3) and automatically tags releases.
 
@@ -226,13 +234,52 @@ gh release create v1.0.0 \
 Users can then download and run directly on Ubuntu ARM64 systems:
 
 ```bash
-# Download from GitHub release
-wget https://github.com/YOUR_ORG/ubuntu-nix-sbom/releases/download/v1.0.0/ubuntu-sbom-arm64
+# Download from GitHub release (use -L to follow redirects)
+curl -LO https://github.com/YOUR_ORG/ubuntu-nix-sbom/releases/download/v1.0.0/ubuntu-sbom-arm64
 chmod +x ubuntu-sbom-arm64
 
 # Run without Nix
 ./ubuntu-sbom-arm64 --output my-sbom.json
 ```
+
+## Validating SPDX Output
+
+The project uses the official [spdx-tools](https://github.com/spdx/tools-python) to validate SPDX 2.3 compliance.
+
+### Install SPDX validation tools:
+
+```bash
+pip install spdx-tools
+```
+
+### Validate an SBOM:
+
+```bash
+# Generate an SBOM
+nix run .#sbom-ubuntu -- --output my-sbom.spdx.json
+
+# Validate it against SPDX 2.3 specification
+pyspdxtools -i my-sbom.spdx.json --validate
+```
+
+### Convert to other SPDX formats:
+
+```bash
+# Convert to SPDX tag-value format
+pyspdxtools -i my-sbom.spdx.json -o my-sbom.spdx --output-format tag-value
+
+# Convert to SPDX XML format
+pyspdxtools -i my-sbom.spdx.json -o my-sbom.spdx.xml --output-format xml
+
+# Convert to SPDX YAML format
+pyspdxtools -i my-sbom.spdx.json -o my-sbom.spdx.yaml --output-format yaml
+```
+
+### Validation in CI/CD
+
+Both the PR check and release workflows automatically validate SPDX output:
+- PR workflow: Validates test SBOMs and uploads them as artifacts
+- Release workflow: Validates SPDX output before creating releases
 
 ## Development
 

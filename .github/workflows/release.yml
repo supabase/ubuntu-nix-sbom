@@ -68,6 +68,23 @@ jobs:
           ./ubuntu-sbom-arm64 --help 2>&1 | grep -q "Usage of" || (echo "ERROR: Binary doesn't show help!" && exit 1)
           echo "Binary test passed!"
 
+      - name: Install SPDX validation tools
+        run: |
+          pip install spdx-tools
+
+      - name: Validate SPDX output
+        run: |
+          echo "Generating test SBOM for validation..."
+
+          # Generate a test SBOM (without file checksums for speed)
+          # Fail fast if generation fails
+          ./ubuntu-sbom-arm64 --output release-test-sbom.spdx.json --no-progress
+
+          echo "Validating SPDX 2.3 JSON document..."
+          pyspdxtools -i release-test-sbom.spdx.json --validate
+
+          echo "✓ SPDX validation passed! Binary generates valid SPDX 2.3 documents."
+
       - name: Get binary info
         id: binary-info
         run: |
