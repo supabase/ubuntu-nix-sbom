@@ -28,16 +28,37 @@ jobs:
 
       - name: Build ARM64 static binary
         run: |
-          nix build .#ubuntu-sbom-static --print-build-logs -o result-arm64
-          ls -lh result-arm64/bin/
-          cp result-arm64/bin/ubuntu-sbom ubuntu-sbom-arm64
-          chmod +x ubuntu-sbom-arm64
-          ls -lh ubuntu-sbom-arm64
-          # Verify binary is not empty
-          if [ ! -s ubuntu-sbom-arm64 ]; then
-            echo "ERROR: Binary is empty!"
+          echo "Building static binary for current system..."
+          nix build .#ubuntu-sbom-static --print-build-logs -o result-arm64 || {
+            echo "ERROR: Nix build failed!"
+            exit 1
+          }
+
+          echo "Checking build result..."
+          ls -lah result-arm64/
+          ls -lah result-arm64/bin/
+
+          if [ ! -f result-arm64/bin/ubuntu-sbom ]; then
+            echo "ERROR: Binary file not found in result!"
             exit 1
           fi
+
+          echo "Copying binary (following symlinks)..."
+          cp -vL result-arm64/bin/ubuntu-sbom ubuntu-sbom-arm64
+          chmod +x ubuntu-sbom-arm64
+
+          echo "Verifying copied binary..."
+          ls -lh ubuntu-sbom-arm64
+          stat ubuntu-sbom-arm64
+          file ubuntu-sbom-arm64 2>/dev/null || echo "file command not available"
+
+          # Verify binary is not empty
+          if [ ! -s ubuntu-sbom-arm64 ]; then
+            echo "ERROR: Binary is empty (0 bytes)!"
+            exit 1
+          fi
+
+          echo "Binary built successfully: $(stat -c%s ubuntu-sbom-arm64) bytes"
 
       - name: Test binary
         run: |

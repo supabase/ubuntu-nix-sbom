@@ -180,6 +180,29 @@
             ${sbom-merger}/bin/sbom-merge --ubuntu "$UBUNTU_SBOM" --nix "$NIX_SBOM" --output "$OUTPUT"
           '';
 
+          # Static binary for current system
+          ubuntu-sbom-static-current = pkgs.buildGoModule {
+            pname = "ubuntu-sbom-generator";
+            version = "1.0.0";
+            src = ./.;
+            vendorHash = null;
+
+            # Build static binary with no CGO
+            buildPhase = ''
+              CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o ubuntu-sbom main.go
+            '';
+
+            installPhase = ''
+              mkdir -p $out/bin
+              cp ubuntu-sbom $out/bin/
+            '';
+
+            meta = with pkgs.lib; {
+              description = "SPDX SBOM generator for Ubuntu/Debian packages (static binary)";
+              license = licenses.asl20;
+            };
+          };
+
           # Static binary builder for a specific architecture
           buildStaticBinary =
             targetSystem:
@@ -255,7 +278,7 @@
             # Static binaries for release
             ubuntu-sbom-static-amd64 = buildStaticBinary "x86_64-linux";
             ubuntu-sbom-static-arm64 = buildStaticBinary "aarch64-linux";
-            ubuntu-sbom-static = buildStaticBinary system;
+            ubuntu-sbom-static = ubuntu-sbom-static-current;
           };
 
           # Apps
