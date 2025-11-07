@@ -1,6 +1,8 @@
 # Binaries
 ubuntu-sbom
 sbom-merge
+ubuntu-nix-sbom
+ubuntu-sbom-arm64
 
 # SBOM outputs
 *.spdx.json
@@ -15,6 +17,11 @@ go.sum
 # Nix
 result
 result-*
+.envrc
+.direnv
+
+# Pre-commit
+.pre-commit-config.yaml
 
 # IDE
 .vscode/
