@@ -6,82 +6,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/supabase/ubuntu-nix-sbom/internal/sbom"
 )
-
-// SPDX Document structure
-type SPDXDocument struct {
-	SPDXVersion       string         `json:"spdxVersion"`
-	DataLicense       string         `json:"dataLicense"`
-	SPDXID            string         `json:"SPDXID"`
-	Name              string         `json:"name"`
-	DocumentNamespace string         `json:"documentNamespace"`
-	CreationInfo      CreationInfo   `json:"creationInfo"`
-	Packages          []Package      `json:"packages"`
-	Relationships     []Relationship `json:"relationships"`
-}
-
-type CreationInfo struct {
-	Created            string   `json:"created"`
-	Creators           []string `json:"creators"`
-	LicenseListVersion string   `json:"licenseListVersion"`
-}
-
-type Package struct {
-	SPDXID           string        `json:"SPDXID"`
-	Name             string        `json:"name"`
-	DownloadLocation string        `json:"downloadLocation"`
-	FilesAnalyzed    bool          `json:"filesAnalyzed"`
-	VerificationCode *Verification `json:"verificationCode,omitempty"`
-	Checksums        []Checksum    `json:"checksums,omitempty"`
-	HomePage         string        `json:"homePage,omitempty"`
-	LicenseConcluded string        `json:"licenseConcluded"`
-	LicenseDeclared  string        `json:"licenseDeclared"`
-	CopyrightText    string        `json:"copyrightText"`
-	Description      string        `json:"description,omitempty"`
-	PackageVersion   string        `json:"versionInfo,omitempty"`
-	Supplier         string        `json:"supplier,omitempty"`
-	ExternalRefs     []ExternalRef `json:"externalRefs,omitempty"`
-}
-
-type Verification struct {
-	Value string `json:"packageVerificationCodeValue"`
-}
-
-type Checksum struct {
-	Algorithm string `json:"algorithm"`
-	Value     string `json:"checksumValue"`
-}
-
-type Relationship struct {
-	SPDXElementID      string `json:"spdxElementId"`
-	RelatedSPDXElement string `json:"relatedSpdxElement"`
-	RelationshipType   string `json:"relationshipType"`
-}
-
-type ExternalRef struct {
-	Category string `json:"referenceCategory"`
-	Type     string `json:"referenceType"`
-	Locator  string `json:"referenceLocator"`
-}
-
-type DpkgPackage struct {
-	Name         string
-	Version      string
-	Architecture string
-	Status       string
-	Maintainer   string
-	Homepage     string
-	Description  string
-	License      string
-	Copyright    string
-}
 
 func main() {
 	var (
@@ -113,29 +46,29 @@ type SBOMGenerator struct {
 	showProgress bool
 }
 
-func (g *SBOMGenerator) Generate() (*SPDXDocument, error) {
+func (g *SBOMGenerator) Generate() (*sbom.SPDXDocument, error) {
 	packages, err := g.getInstalledPackages()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get packages: %w", err)
 	}
 
-	doc := &SPDXDocument{
+	doc := &sbom.SPDXDocument{
 		SPDXVersion:       "SPDX-2.3",
 		DataLicense:       "CC0-1.0",
 		SPDXID:            "SPDXRef-DOCUMENT",
 		Name:              fmt.Sprintf("Ubuntu-System-SBOM-%s", time.Now().Format("2006-01-02")),
-		DocumentNamespace: fmt.Sprintf("https://sbom.ubuntu.system/%s", generateUUID()),
-		CreationInfo: CreationInfo{
+		DocumentNamespace: fmt.Sprintf("https://sbom.ubuntu.system/%s", sbom.GenerateUUID()),
+		CreationInfo: sbom.CreationInfo{
 			Created:            time.Now().UTC().Format(time.RFC3339),
 			Creators:           []string{"Tool: ubuntu-sbom-generator-1.0"},
 			LicenseListVersion: "3.20",
 		},
-		Packages:      []Package{},
-		Relationships: []Relationship{},
+		Packages:      []sbom.Package{},
+		Relationships: []sbom.Relationship{},
 	}
 
 	// Add root package representing the Ubuntu system
-	rootPkg := Package{
+	rootPkg := sbom.Package{
 		SPDXID:           "SPDXRef-Ubuntu-System",
 		Name:             "Ubuntu-System",
 		DownloadLocation: "NOASSERTION",
@@ -156,7 +89,7 @@ func (g *SBOMGenerator) Generate() (*SPDXDocument, error) {
 		doc.Packages = append(doc.Packages, spdxPkg)
 
 		// Add relationship
-		doc.Relationships = append(doc.Relationships, Relationship{
+		doc.Relationships = append(doc.Relationships, sbom.Relationship{
 			SPDXElementID:      "SPDXRef-Ubuntu-System",
 			RelatedSPDXElement: spdxPkg.SPDXID,
 			RelationshipType:   "CONTAINS",
@@ -164,7 +97,7 @@ func (g *SBOMGenerator) Generate() (*SPDXDocument, error) {
 	}
 
 	// Add document describes relationship
-	doc.Relationships = append(doc.Relationships, Relationship{
+	doc.Relationships = append(doc.Relationships, sbom.Relationship{
 		SPDXElementID:      "SPDXRef-DOCUMENT",
 		RelatedSPDXElement: "SPDXRef-Ubuntu-System",
 		RelationshipType:   "DESCRIBES",
@@ -173,14 +106,14 @@ func (g *SBOMGenerator) Generate() (*SPDXDocument, error) {
 	return doc, nil
 }
 
-func (g *SBOMGenerator) getInstalledPackages() ([]DpkgPackage, error) {
+func (g *SBOMGenerator) getInstalledPackages() ([]sbom.DpkgPackage, error) {
 	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${Architecture}\t${Status}\t${Maintainer}\t${Homepage}\t${Description}\n")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	var packages []DpkgPackage
+	var packages []sbom.DpkgPackage
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 
 	for scanner.Scan() {
@@ -188,7 +121,7 @@ func (g *SBOMGenerator) getInstalledPackages() ([]DpkgPackage, error) {
 		parts := strings.Split(line, "\t")
 
 		if len(parts) >= 7 && strings.Contains(parts[3], "installed") {
-			pkg := DpkgPackage{
+			pkg := sbom.DpkgPackage{
 				Name:         parts[0],
 				Version:      parts[1],
 				Architecture: parts[2],
@@ -239,8 +172,8 @@ func (g *SBOMGenerator) getPackageLicense(packageName string) (string, string) {
 	return license, copyright
 }
 
-func (g *SBOMGenerator) packageToSPDX(pkg DpkgPackage, id int) Package {
-	spdxPkg := Package{
+func (g *SBOMGenerator) packageToSPDX(pkg sbom.DpkgPackage, id int) sbom.Package {
+	spdxPkg := sbom.Package{
 		SPDXID:           fmt.Sprintf("SPDXRef-Ubuntu-Package-%d-%s", id, sanitizeName(pkg.Name)),
 		Name:             pkg.Name,
 		PackageVersion:   pkg.Version,
@@ -261,7 +194,7 @@ func (g *SBOMGenerator) packageToSPDX(pkg DpkgPackage, id int) Package {
 	}
 
 	// Add external reference for the package
-	spdxPkg.ExternalRefs = []ExternalRef{
+	spdxPkg.ExternalRefs = []sbom.ExternalRef{
 		{
 			Category: "PACKAGE-MANAGER",
 			Type:     "purl",
@@ -272,7 +205,7 @@ func (g *SBOMGenerator) packageToSPDX(pkg DpkgPackage, id int) Package {
 	// If include-files is set, calculate package verification
 	if g.includeFiles {
 		if checksum := g.calculatePackageChecksum(pkg.Name); checksum != "" {
-			spdxPkg.Checksums = []Checksum{
+			spdxPkg.Checksums = []sbom.Checksum{
 				{
 					Algorithm: "SHA256",
 					Value:     checksum,
@@ -300,7 +233,7 @@ func (g *SBOMGenerator) calculatePackageChecksum(packageName string) string {
 			continue
 		}
 
-		if fileHash := hashFile(filePath); fileHash != "" {
+		if fileHash := sbom.HashFile(filePath); fileHash != "" {
 			h.Write([]byte(fileHash))
 		}
 	}
@@ -308,22 +241,7 @@ func (g *SBOMGenerator) calculatePackageChecksum(packageName string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func hashFile(path string) string {
-	file, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer file.Close()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, file); err != nil {
-		return ""
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-func (g *SBOMGenerator) Save(doc *SPDXDocument, outputPath string) error {
+func (g *SBOMGenerator) Save(doc *sbom.SPDXDocument, outputPath string) error {
 	file, err := os.Create(outputPath)
 	if err != nil {
 		return err
@@ -441,15 +359,4 @@ func sanitizeName(name string) string {
 	// Replace non-alphanumeric characters with hyphens for SPDX IDs
 	re := regexp.MustCompile(`[^a-zA-Z0-9-.]`)
 	return re.ReplaceAllString(name, "-")
-}
-
-func generateUUID() string {
-	// Simple UUID v4 generation
-	b := make([]byte, 16)
-	for i := range b {
-		b[i] = byte(time.Now().UnixNano() & 0xff)
-	}
-
-	return fmt.Sprintf("%x-%x-%x-%x-%x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }

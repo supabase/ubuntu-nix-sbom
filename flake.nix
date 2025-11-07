@@ -48,7 +48,7 @@
             vendorHash = null;
 
             buildPhase = ''
-              go build -o ubuntu-sbom main.go
+              go build -o ubuntu-sbom ./cmd/ubuntu-sbom
             '';
 
             installPhase = ''
@@ -70,7 +70,7 @@
             vendorHash = null;
 
             buildPhase = ''
-              go build -o sbom-merge merge.go
+              go build -o sbom-merge ./cmd/sbom-merge
             '';
 
             installPhase = ''
@@ -189,7 +189,7 @@
 
             # Build static binary with no CGO
             buildPhase = ''
-              CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o ubuntu-sbom main.go
+              CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o ubuntu-sbom ./cmd/ubuntu-sbom
             '';
 
             installPhase = ''
@@ -220,7 +220,7 @@
 
               # Build static binary with no CGO
               buildPhase = ''
-                CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o ubuntu-sbom main.go
+                CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o ubuntu-sbom ./cmd/ubuntu-sbom
               '';
 
               installPhase = ''

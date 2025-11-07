@@ -9,9 +9,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/supabase/ubuntu-nix-sbom/internal/sbom"
 )
 
-func mainMerge() {
+func main() {
 	var (
 		ubuntuSBOM = flag.String("ubuntu", "", "Path to Ubuntu SBOM JSON file")
 		nixSBOM    = flag.String("nix", "", "Path to Nix SBOM JSON file")
@@ -38,7 +40,7 @@ func mainMerge() {
 
 type SBOMMerger struct{}
 
-func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*SPDXDocument, error) {
+func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*sbom.SPDXDocument, error) {
 	// Load Ubuntu SBOM
 	ubuntuDoc, err := m.loadDocument(ubuntuPath)
 	if err != nil {
@@ -52,23 +54,23 @@ func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*SPDXDocument, error) {
 	}
 
 	// Create merged document
-	mergedDoc := &SPDXDocument{
+	mergedDoc := &sbom.SPDXDocument{
 		SPDXVersion:       "SPDX-2.3",
 		DataLicense:       "CC0-1.0",
 		SPDXID:            "SPDXRef-DOCUMENT",
 		Name:              fmt.Sprintf("Ubuntu-Nix-System-SBOM-%s", time.Now().Format("2006-01-02")),
-		DocumentNamespace: fmt.Sprintf("https://sbom.ubuntu-nix.system/%s", generateUUID()),
-		CreationInfo: CreationInfo{
+		DocumentNamespace: fmt.Sprintf("https://sbom.ubuntu-nix.system/%s", sbom.GenerateUUID()),
+		CreationInfo: sbom.CreationInfo{
 			Created:            time.Now().UTC().Format(time.RFC3339),
 			Creators:           m.mergeCreators(ubuntuDoc, nixDoc),
 			LicenseListVersion: "3.20",
 		},
-		Packages:      []Package{},
-		Relationships: []Relationship{},
+		Packages:      []sbom.Package{},
+		Relationships: []sbom.Relationship{},
 	}
 
 	// Create the single root System package
-	systemPkg := Package{
+	systemPkg := sbom.Package{
 		SPDXID:           "SPDXRef-System",
 		Name:             "Ubuntu-Nix-System",
 		DownloadLocation: "NOASSERTION",
@@ -81,7 +83,7 @@ func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*SPDXDocument, error) {
 	mergedDoc.Packages = append(mergedDoc.Packages, systemPkg)
 
 	// Add document describes relationship
-	mergedDoc.Relationships = append(mergedDoc.Relationships, Relationship{
+	mergedDoc.Relationships = append(mergedDoc.Relationships, sbom.Relationship{
 		SPDXElementID:      "SPDXRef-DOCUMENT",
 		RelatedSPDXElement: "SPDXRef-System",
 		RelationshipType:   "DESCRIBES",
@@ -102,7 +104,7 @@ func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*SPDXDocument, error) {
 		mergedDoc.Packages = append(mergedDoc.Packages, pkg)
 
 		// Add relationship to system root
-		mergedDoc.Relationships = append(mergedDoc.Relationships, Relationship{
+		mergedDoc.Relationships = append(mergedDoc.Relationships, sbom.Relationship{
 			SPDXElementID:      "SPDXRef-System",
 			RelatedSPDXElement: pkg.SPDXID,
 			RelationshipType:   "CONTAINS",
@@ -127,7 +129,7 @@ func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*SPDXDocument, error) {
 		mergedDoc.Packages = append(mergedDoc.Packages, pkg)
 
 		// Add relationship to system root
-		mergedDoc.Relationships = append(mergedDoc.Relationships, Relationship{
+		mergedDoc.Relationships = append(mergedDoc.Relationships, sbom.Relationship{
 			SPDXElementID:      "SPDXRef-System",
 			RelatedSPDXElement: pkg.SPDXID,
 			RelationshipType:   "CONTAINS",
@@ -140,13 +142,13 @@ func (m *SBOMMerger) Merge(ubuntuPath, nixPath string) (*SPDXDocument, error) {
 	return mergedDoc, nil
 }
 
-func (m *SBOMMerger) loadDocument(path string) (*SPDXDocument, error) {
+func (m *SBOMMerger) loadDocument(path string) (*sbom.SPDXDocument, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var doc SPDXDocument
+	var doc sbom.SPDXDocument
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
@@ -154,7 +156,7 @@ func (m *SBOMMerger) loadDocument(path string) (*SPDXDocument, error) {
 	return &doc, nil
 }
 
-func (m *SBOMMerger) mergeCreators(ubuntuDoc, nixDoc *SPDXDocument) []string {
+func (m *SBOMMerger) mergeCreators(ubuntuDoc, nixDoc *sbom.SPDXDocument) []string {
 	creatorMap := make(map[string]bool)
 	var creators []string
 
@@ -196,7 +198,7 @@ func (m *SBOMMerger) renumberSPDXID(originalID, prefix string) string {
 	return fmt.Sprintf("SPDXRef-%s-%s", prefix, strings.TrimPrefix(originalID, "SPDXRef-"))
 }
 
-func (m *SBOMMerger) Save(doc *SPDXDocument, outputPath string) error {
+func (m *SBOMMerger) Save(doc *sbom.SPDXDocument, outputPath string) error {
 	file, err := os.Create(outputPath)
 	if err != nil {
 		return err
