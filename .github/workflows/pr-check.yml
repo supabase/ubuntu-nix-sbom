@@ -62,13 +62,13 @@ jobs:
           echo "Testing SPDX conversion capabilities..."
 
           # Convert to SPDX tag-value format
-          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx --output-format tag-value
+          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx
 
           # Convert to SPDX XML format
-          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx.xml --output-format xml
+          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx.xml
 
           # Convert to SPDX YAML format
-          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx.yaml --output-format yaml
+          pyspdxtools -i test-sbom.spdx.json -o test-sbom.spdx.yaml
 
           echo "All SPDX format conversions successful!"
 

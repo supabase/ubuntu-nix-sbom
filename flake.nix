@@ -315,6 +315,7 @@
               gopls
               gotools
               sbomnix
+              python3Packages.spdx-tools
               # Formatting tools
               nixfmt-rfc-style
               shellcheck
