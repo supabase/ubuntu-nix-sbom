@@ -228,6 +228,42 @@
               program = "${nix-only-wrapper}/bin/sbom-nix";
             };
 
+            # SPDX validation tool
+            validate-spdx = {
+              type = "app";
+              program = "${pkgs.writeShellScript "validate-spdx" ''
+                if [ $# -eq 0 ]; then
+                  echo "Usage: nix run .#validate-spdx -- <sbom-file.json>"
+                  echo ""
+                  echo "Validates an SPDX SBOM file against the SPDX 2.3 specification."
+                  echo ""
+                  echo "Example:"
+                  echo "  nix run .#validate-spdx -- my-sbom.spdx.json"
+                  exit 1
+                fi
+
+                SBOM_FILE="$1"
+
+                if [ ! -f "$SBOM_FILE" ]; then
+                  echo "ERROR: File not found: $SBOM_FILE"
+                  exit 1
+                fi
+
+                echo "Validating SPDX document: $SBOM_FILE"
+                echo "---"
+                ${pkgs.python3Packages.spdx-tools}/bin/pyspdxtools -i "$SBOM_FILE"
+
+                if [ $? -eq 0 ]; then
+                  echo "---"
+                  echo "✓ SPDX validation passed!"
+                else
+                  echo "---"
+                  echo "✗ SPDX validation failed!"
+                  exit 1
+                fi
+              ''}";
+            };
+
             # Default app
             default = {
               type = "app";
