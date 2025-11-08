@@ -91,11 +91,13 @@
 
           # Wrapper script for Nix-only SBOM
           nix-only-wrapper = pkgs.writeShellScriptBin "sbom-nix" ''
+            export PATH="${sbomnix}/bin:$PATH"
             ${sbom}/bin/sbom nix "$@"
           '';
 
           # Wrapper script for merged SBOM
           merged-wrapper = pkgs.writeShellScriptBin "sbom-generator" ''
+            export PATH="${sbomnix}/bin:$PATH"
             ${sbom}/bin/sbom combined "$@"
           '';
 
