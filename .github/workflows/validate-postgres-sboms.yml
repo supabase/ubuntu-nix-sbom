@@ -101,7 +101,14 @@ jobs:
       - name: Build Postgres ${{ matrix.package.name }}
         run: |
           echo "Building ${{ matrix.package.name }}..."
-          nix build "github:supabase/postgres#${{ matrix.package.path }}" --out-link build-output --accept-flake-config
+
+          # Build and get the store path
+          STORE_PATH=$(nix build "github:supabase/postgres#${{ matrix.package.path }}" --accept-flake-config --print-out-paths --no-link)
+
+          echo "Store path: $STORE_PATH"
+
+          # Create a symlink to the store path
+          ln -s "$STORE_PATH" build-output
 
           echo "Verifying build output..."
           ls -lah build-output
@@ -135,21 +142,6 @@ jobs:
           fi
 
           echo "✓ SBOM validation passed for ${{ matrix.package.name }}"
-
-      - name: Set artifact name
-        id: artifact-name
-        run: |
-          # Sanitize package name for artifact (replace / with -)
-          SAFE_NAME=$(echo "${{ matrix.package.name }}" | tr '/' '-')
-          echo "name=${SAFE_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ${{ steps.artifact-name.outputs.name }}-sbom
-          path: "*-sbom.json"
-          retention-days: 30
 
   summary:
     name: Validation Summary
