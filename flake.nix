@@ -91,11 +91,13 @@
 
           # Wrapper script for Nix-only SBOM
           nix-only-wrapper = pkgs.writeShellScriptBin "sbom-nix" ''
+            export PATH="${sbomnix}/bin:$PATH"
             ${sbom}/bin/sbom nix "$@"
           '';
 
           # Wrapper script for merged SBOM
           merged-wrapper = pkgs.writeShellScriptBin "sbom-generator" ''
+            export PATH="${sbomnix}/bin:$PATH"
             ${sbom}/bin/sbom combined "$@"
           '';
 
@@ -249,6 +251,48 @@
             ];
             shellHook = ''
               ${config.pre-commit.installationScript}
+            '';
+          };
+
+          # Checks
+          checks = {
+            # Verify sbomnix is accessible in wrapper scripts
+            sbomnix-available = pkgs.runCommand "check-sbomnix-available" { } ''
+              # Test that sbomnix is in PATH when running through wrapper
+              export PATH="${sbomnix}/bin:$PATH"
+
+              # Check sbomnix is executable
+              if ! command -v sbomnix &> /dev/null; then
+                echo "ERROR: sbomnix not found in PATH"
+                exit 1
+              fi
+
+              # Check sbomnix can show help (verifies it's not just present but functional)
+              if ! sbomnix --help &> /dev/null; then
+                echo "ERROR: sbomnix --help failed"
+                exit 1
+              fi
+
+              echo "SUCCESS: sbomnix is available and functional"
+              touch $out
+            '';
+
+            # Verify sbom binary can be built
+            sbom-builds = pkgs.runCommand "check-sbom-builds" { buildInputs = [ sbom ]; } ''
+              # Check the binary exists
+              if [ ! -f ${sbom}/bin/sbom ]; then
+                echo "ERROR: sbom binary not found"
+                exit 1
+              fi
+
+              # Check it's executable
+              if ! ${sbom}/bin/sbom help &> /dev/null; then
+                echo "ERROR: sbom help command failed"
+                exit 1
+              fi
+
+              echo "SUCCESS: sbom binary builds and runs"
+              touch $out
             '';
           };
         };
