@@ -37,6 +37,12 @@ Generate a combined SBOM for both Ubuntu and Nix packages:
 nix run .#sbom-generator -- --nix-target /nix/store/xxx-system --output merged-sbom.json
 ```
 
+Or use the sbom binary directly:
+
+```bash
+sbom combined --nix-target /nix/store/xxx-system --output merged-sbom.json
+```
+
 Options:
 - `--nix-target <path>`: Required. Path to the Nix derivation to analyze
 - `--output <file>`: Output file path (default: merged-sbom.spdx.json)
@@ -77,6 +83,37 @@ nix run .#sbom-nix -- /nix/store/xxx-derivation --output nix-sbom.json
 
 The first argument (derivation path) is required. Options:
 - `--output <file>`: Output file path (default: nix-sbom.spdx.json)
+
+## CLI Reference
+
+The project provides two binaries:
+
+### ubuntu-sbom (Static Binary)
+
+Standalone binary for Ubuntu/Debian systems without Nix:
+
+```bash
+ubuntu-sbom --output ubuntu-sbom.json [--include-files] [--progress]
+```
+
+### sbom (Full-Featured Binary)
+
+Complete tooling with subcommands:
+
+**Ubuntu-only SBOM:**
+```bash
+sbom ubuntu --output ubuntu-sbom.json [--include-files] [--progress]
+```
+
+**Nix-only SBOM:**
+```bash
+sbom nix <derivation-path> --output nix-sbom.json
+```
+
+**Combined SBOM:**
+```bash
+sbom combined --nix-target <derivation> --output merged.json [--include-files] [--progress]
+```
 
 ## How It Works
 

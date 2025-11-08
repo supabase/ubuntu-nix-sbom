@@ -62,122 +62,41 @@
             };
           };
 
-          # Build the merger tool
-          sbom-merger = pkgs.buildGoModule {
-            pname = "sbom-merger";
+          # Build the full-featured sbom binary
+          sbom = pkgs.buildGoModule {
+            pname = "sbom";
             version = "1.0.0";
             src = ./.;
             vendorHash = null;
 
             buildPhase = ''
-              go build -o sbom-merge merge.go
+              go build -o sbom ./cmd/sbom
             '';
 
             installPhase = ''
               mkdir -p $out/bin
-              cp sbom-merge $out/bin/
+              cp sbom $out/bin/
             '';
 
             meta = with pkgs.lib; {
-              description = "Merges Ubuntu and Nix SPDX SBOMs";
+              description = "SPDX SBOM generator with Ubuntu and Nix support";
               license = licenses.asl20;
             };
           };
 
           # Wrapper script for Ubuntu-only SBOM
           ubuntu-only-wrapper = pkgs.writeShellScriptBin "sbom-ubuntu" ''
-            ${ubuntu-sbom}/bin/ubuntu-sbom "$@"
+            ${sbom}/bin/sbom ubuntu "$@"
           '';
 
           # Wrapper script for Nix-only SBOM
           nix-only-wrapper = pkgs.writeShellScriptBin "sbom-nix" ''
-            if [ $# -eq 0 ]; then
-              echo "Error: Derivation path required"
-              echo "Usage: sbom-nix <derivation-path> [--output <file>]"
-              exit 1
-            fi
-
-            DERIVATION="$1"
-            shift
-
-            OUTPUT="nix-sbom.spdx.json"
-
-            # Parse remaining arguments for --output flag
-            while [[ $# -gt 0 ]]; do
-              case $1 in
-                --output)
-                  OUTPUT="$2"
-                  shift 2
-                  ;;
-                *)
-                  echo "Unknown option: $1"
-                  exit 1
-                  ;;
-              esac
-            done
-
-            ${sbomnix}/bin/sbomnix "$DERIVATION" --spdx="$OUTPUT"
+            ${sbom}/bin/sbom nix "$@"
           '';
 
           # Wrapper script for merged SBOM
           merged-wrapper = pkgs.writeShellScriptBin "sbom-generator" ''
-            OUTPUT="merged-sbom.spdx.json"
-            NIX_TARGET=""
-            INCLUDE_FILES=""
-            PROGRESS="--progress"
-
-            # Parse arguments
-            while [[ $# -gt 0 ]]; do
-              case $1 in
-                --output)
-                  OUTPUT="$2"
-                  shift 2
-                  ;;
-                --nix-target)
-                  NIX_TARGET="$2"
-                  shift 2
-                  ;;
-                --include-files)
-                  INCLUDE_FILES="--include-files"
-                  shift
-                  ;;
-                --no-progress)
-                  PROGRESS=""
-                  shift
-                  ;;
-                --progress)
-                  PROGRESS="--progress"
-                  shift
-                  ;;
-                *)
-                  echo "Unknown option: $1"
-                  echo "Usage: sbom-generator --nix-target <derivation> [--output <file>] [--include-files] [--progress]"
-                  exit 1
-                  ;;
-              esac
-            done
-
-            if [ -z "$NIX_TARGET" ]; then
-              echo "Error: --nix-target is required"
-              echo "Usage: sbom-generator --nix-target <derivation> [--output <file>] [--include-files] [--progress]"
-              exit 1
-            fi
-
-            # Create temporary directory for intermediate files
-            TMPDIR=$(mktemp -d)
-            trap "rm -rf $TMPDIR" EXIT
-
-            UBUNTU_SBOM="$TMPDIR/ubuntu-sbom.spdx.json"
-            NIX_SBOM="$TMPDIR/nix-sbom.spdx.json"
-
-            echo "Generating Ubuntu SBOM..."
-            ${ubuntu-sbom}/bin/ubuntu-sbom --output "$UBUNTU_SBOM" $INCLUDE_FILES $PROGRESS
-
-            echo "Generating Nix SBOM..."
-            ${sbomnix}/bin/sbomnix "$NIX_TARGET" --spdx="$NIX_SBOM"
-
-            echo "Merging SBOMs..."
-            ${sbom-merger}/bin/sbom-merge --ubuntu "$UBUNTU_SBOM" --nix "$NIX_SBOM" --output "$OUTPUT"
+            ${sbom}/bin/sbom combined "$@"
           '';
 
           # Static binary for current system
@@ -272,8 +191,8 @@
           # Packages
           packages = {
             ubuntu-sbom-generator = ubuntu-sbom;
-            sbom-merger = sbom-merger;
-            default = merged-wrapper;
+            sbom = sbom;
+            default = sbom;
 
             # Static binaries for release
             ubuntu-sbom-static-amd64 = buildStaticBinary "x86_64-linux";
@@ -285,6 +204,12 @@
           apps = {
             # Main app: merged SBOM generator
             sbom-generator = {
+              type = "app";
+              program = "${merged-wrapper}/bin/sbom-generator";
+            };
+
+            # Combined SBOM (alias for sbom-generator)
+            sbom-combined = {
               type = "app";
               program = "${merged-wrapper}/bin/sbom-generator";
             };
