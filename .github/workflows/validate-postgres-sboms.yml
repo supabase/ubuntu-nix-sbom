@@ -9,6 +9,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   discover-packages:
     name: Discover Postgres Packages
@@ -45,12 +49,15 @@ jobs:
           # Get all packages from the flake
           nix flake show github:supabase/postgres --json > flake-info.json
 
-          # Extract package names, filter out psql_*/exts/* pattern
+          # Extract package names, filter out:
+          # - psql_*/exts/* (extensions are in psql_*/bin)
+          # - docs (requires network access to build)
           # Format: {"name": "package-name", "path": "package/path"}
           PACKAGES=$(cat flake-info.json | jq -r '
             .packages."aarch64-linux" // {} |
             keys[] |
             select(. | contains("/exts/") | not) |
+            select(. != "docs") |
             {name: ., path: .}
           ' | jq -sc .)
 
@@ -94,7 +101,7 @@ jobs:
       - name: Build Postgres ${{ matrix.package.name }}
         run: |
           echo "Building ${{ matrix.package.name }}..."
-          nix build github:supabase/postgres#${{ matrix.package.path }} -o build-output
+          nix build "github:supabase/postgres#${{ matrix.package.path }}" -o build-output --accept-flake-config
 
           echo "Verifying build output..."
           ls -lah build-output
@@ -129,11 +136,18 @@ jobs:
 
           echo "✓ SBOM validation passed for ${{ matrix.package.name }}"
 
+      - name: Set artifact name
+        id: artifact-name
+        run: |
+          # Sanitize package name for artifact (replace / with -)
+          SAFE_NAME=$(echo "${{ matrix.package.name }}" | tr '/' '-')
+          echo "name=${SAFE_NAME}" >> $GITHUB_OUTPUT
+
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ matrix.package.name }}-sbom
+          name: ${{ steps.artifact-name.outputs.name }}-sbom
           path: "*-sbom.json"
           retention-days: 30
 
