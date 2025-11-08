@@ -101,7 +101,7 @@ jobs:
       - name: Build Postgres ${{ matrix.package.name }}
         run: |
           echo "Building ${{ matrix.package.name }}..."
-          nix build "github:supabase/postgres#${{ matrix.package.path }}" -o build-output --accept-flake-config
+          nix build "github:supabase/postgres#${{ matrix.package.path }}" --out-link build-output --accept-flake-config
 
           echo "Verifying build output..."
           ls -lah build-output
