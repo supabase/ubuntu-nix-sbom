@@ -29,49 +29,51 @@ nix develop
 
 ## Usage
 
-### Merged SBOM (Ubuntu + Nix)
+The project provides several Nix flake apps for different use cases:
 
-Generate a combined SBOM for both Ubuntu and Nix packages:
+### Combined SBOM (Ubuntu + Nix)
+
+Generate a merged SBOM containing both Ubuntu and Nix packages:
 
 ```bash
 nix run .#sbom-generator -- --nix-target /nix/store/xxx-system --output merged-sbom.json
 ```
 
-Or use the sbom binary directly:
+Or use the alias:
 
 ```bash
-sbom combined --nix-target /nix/store/xxx-system --output merged-sbom.json
+nix run .#sbom-combined -- --nix-target /nix/store/xxx-system --output merged-sbom.json
 ```
 
-Options:
+**Options:**
 - `--nix-target <path>`: Required. Path to the Nix derivation to analyze
 - `--output <file>`: Output file path (default: merged-sbom.spdx.json)
 - `--include-files`: Include file checksums for Ubuntu packages (slower)
 - `--progress`: Show progress indicators (default: true)
 - `--no-progress`: Disable progress indicators
 
-Example with all options:
-
+**Example:**
 ```bash
 nix run .#sbom-generator -- \
   --nix-target /nix/var/nix/profiles/system \
   --output my-system-sbom.json \
   --include-files \
-  --progress
+  --no-progress
 ```
 
 ### Ubuntu-Only SBOM
 
-Generate SBOM for Ubuntu packages only:
+Generate SBOM for Ubuntu/Debian packages only:
 
 ```bash
 nix run .#sbom-ubuntu -- --output ubuntu-sbom.json
 ```
 
-Options:
+**Options:**
 - `--output <file>`: Output file path (default: ubuntu-sbom.spdx.json)
 - `--include-files`: Include file checksums (slower but more detailed)
 - `--progress`: Show progress indicators (default: true)
+- `--no-progress`: Disable progress indicators
 
 ### Nix-Only SBOM
 
@@ -81,39 +83,30 @@ Generate SBOM for Nix packages only:
 nix run .#sbom-nix -- /nix/store/xxx-derivation --output nix-sbom.json
 ```
 
-The first argument (derivation path) is required. Options:
+**Options:**
 - `--output <file>`: Output file path (default: nix-sbom.spdx.json)
 
-## CLI Reference
+The derivation path is required as the first positional argument.
 
-The project provides two binaries:
+### Validate SPDX
 
-### ubuntu-sbom (Static Binary)
-
-Standalone binary for Ubuntu/Debian systems without Nix:
+Validate an SBOM file against the SPDX 2.3 specification:
 
 ```bash
-ubuntu-sbom --output ubuntu-sbom.json [--include-files] [--progress]
+nix run .#validate-spdx -- my-sbom.spdx.json
 ```
 
-### sbom (Full-Featured Binary)
+This uses the official [spdx-tools](https://github.com/spdx/tools-python) to verify compliance.
 
-Complete tooling with subcommands:
+## Available Flake Apps
 
-**Ubuntu-only SBOM:**
-```bash
-sbom ubuntu --output ubuntu-sbom.json [--include-files] [--progress]
-```
-
-**Nix-only SBOM:**
-```bash
-sbom nix <derivation-path> --output nix-sbom.json
-```
-
-**Combined SBOM:**
-```bash
-sbom combined --nix-target <derivation> --output merged.json [--include-files] [--progress]
-```
+| App | Description |
+|-----|-------------|
+| `sbom-generator` | Generate combined Ubuntu + Nix SBOM (default app) |
+| `sbom-combined` | Alias for `sbom-generator` |
+| `sbom-ubuntu` | Generate Ubuntu-only SBOM |
+| `sbom-nix` | Generate Nix-only SBOM using sbomnix |
+| `validate-spdx` | Validate SBOM against SPDX 2.3 specification |
 
 ## How It Works
 
@@ -220,6 +213,19 @@ On every pull request to `main`:
   - Tests conversion to other SPDX formats (tag-value, XML, YAML)
   - Uploads test SBOM as artifact
 
+### Postgres SBOM Validation
+
+On every pull request and push to `main`:
+- **Dynamic Package Discovery**: Uses `nix flake show` to discover all Supabase Postgres packages
+- **Runtime Dependencies**: Generates SBOMs with accurate runtime dependencies using sbomnix
+- **SPDX Validation**: Validates every generated SBOM against SPDX 2.3 specification
+- **CPE Fixing**: Automatically fixes invalid CPE references from upstream tools
+- **Concurrency Control**: Cancels previous runs when new commits are pushed
+
+The workflow dynamically discovers and validates SBOMs for all packages except:
+- Extension packages (`psql_*/exts/*` - already included in `psql_*/bin`)
+- Documentation packages (require network access to build)
+
 ### Automated Releases
 
 On every merge to `main`:
@@ -235,17 +241,50 @@ On every merge to `main`:
 
 The release workflow uses semantic versioning (e.g., v1.2.3) and automatically tags releases.
 
+## Static Binary (Ubuntu-Only, No Nix Required)
+
+For Ubuntu/Debian systems without Nix, a static binary is available that generates Ubuntu-only SBOMs.
+
+### Using the Static Binary
+
+The `ubuntu-sbom` binary is a standalone executable with no dependencies:
+
+```bash
+# Download from GitHub release
+curl -LO https://github.com/YOUR_ORG/ubuntu-nix-sbom/releases/latest/download/ubuntu-sbom-arm64
+chmod +x ubuntu-sbom-arm64
+
+# Generate Ubuntu SBOM
+./ubuntu-sbom-arm64 --output my-system.spdx.json
+```
+
+**Options:**
+- `--output <file>`: Output file path (default: ubuntu-sbom.spdx.json)
+- `--include-files`: Include SHA256 checksums of all package files (slower)
+- `--progress`: Show progress indicators (default: true)
+- `--no-progress`: Disable progress indicators
+
+**Example with all options:**
+```bash
+./ubuntu-sbom-arm64 \
+  --output detailed-sbom.json \
+  --include-files \
+  --no-progress
+```
+
+This binary only scans dpkg-installed packages and does not require Nix.
+
 ## Building Static Binaries for Release
 
-The flake includes static binary builds that can be distributed to Ubuntu users without requiring Nix:
+The flake includes static binary builds that can be distributed to Ubuntu users:
 
-### Build arm64 static binary:
+### Build ARM64 static binary:
 
 ```bash
 nix build .#ubuntu-sbom-static-arm64 -o result-arm64
 ```
 
-The binary will be available at `result-arm64/bin/ubuntu-sbom` (2.4MB, statically linked, no dependencies).
+The binary will be at `result-arm64/bin/ubuntu-sbom` (~2.4MB, statically linked).
 
 ### Build for current system:
 
@@ -255,13 +294,11 @@ nix build .#ubuntu-sbom-static -o result-static
 
 ### Creating a GitHub Release
 
-To release static binaries:
-
 ```bash
 # Build the binary
 nix build .#ubuntu-sbom-static-arm64 -o result-arm64
 
-# Create a GitHub release and upload the binary
+# Create a GitHub release
 gh release create v1.0.0 \
   result-arm64/bin/ubuntu-sbom#ubuntu-sbom-arm64 \
   --title "v1.0.0" \
@@ -330,14 +367,18 @@ This provides:
 - Go toolchain
 - gopls (Go language server)
 - sbomnix
+- SPDX validation tools (spdx-tools)
 - Formatting tools (nixfmt, shellcheck, shfmt, gofmt)
 - Pre-commit hooks (automatically installed)
 
 Build the Go binaries manually:
 
 ```bash
+# Build the Ubuntu-only static binary
 go build -o ubuntu-sbom main.go
-go build -o sbom-merge merge.go
+
+# Build the full sbom tool with all subcommands
+go build -o sbom ./cmd/sbom
 ```
 
 ### Code Formatting
