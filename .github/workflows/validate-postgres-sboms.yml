@@ -1,0 +1,158 @@
+name: Validate Postgres SBOMs
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover-packages:
+    name: Discover Postgres Packages
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      packages: ${{ steps.discover.outputs.packages }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        if: ${{ github.secret_source == 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Install Nix (fallback)
+        uses: cachix/install-nix-action@v30
+        if: ${{ github.secret_source != 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Discover packages from flake
+        id: discover
+        run: |
+          echo "Discovering packages from github:supabase/postgres..."
+
+          # Get all packages from the flake
+          nix flake show github:supabase/postgres --json > flake-info.json
+
+          # Extract package names, filter out:
+          # - psql_*/exts/* (extensions are in psql_*/bin)
+          # - docs (requires network access to build)
+          # Format: {"name": "package-name", "path": "package/path"}
+          PACKAGES=$(cat flake-info.json | jq -r '
+            .packages."aarch64-linux" // {} |
+            keys[] |
+            select(. | contains("/exts/") | not) |
+            select(. != "docs") |
+            {name: ., path: .}
+          ' | jq -sc .)
+
+          echo "Found packages:"
+          echo "$PACKAGES" | jq -r '.[] | .name'
+
+          # Set output for matrix
+          echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+
+  validate-sboms:
+    name: Generate and Validate Postgres SBOMs
+    runs-on: ubuntu-24.04-arm
+    needs: discover-packages
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.discover-packages.outputs.packages) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        if: ${{ github.secret_source == 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Install Nix (fallback)
+        uses: cachix/install-nix-action@v30
+        if: ${{ github.secret_source != 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Build Postgres ${{ matrix.package.name }}
+        run: |
+          echo "Building ${{ matrix.package.name }}..."
+
+          # Build and get the store path
+          STORE_PATH=$(nix build "github:supabase/postgres#${{ matrix.package.path }}" --accept-flake-config --print-out-paths --no-link)
+
+          echo "Store path: $STORE_PATH"
+
+          # Create a symlink to the store path
+          ln -s "$STORE_PATH" build-output
+
+          echo "Verifying build output..."
+          ls -lah build-output
+
+      - name: Generate merged SBOM for ${{ matrix.package.name }}
+        run: |
+          echo "Generating SBOM for ${{ matrix.package.name }}..."
+
+          # Sanitize package name for filename (replace / with -)
+          SAFE_NAME=$(echo "${{ matrix.package.name }}" | tr '/' '-')
+
+          nix run .#sbom-generator -- \
+            --nix-target ./build-output \
+            --output "${SAFE_NAME}-sbom.json" \
+            --no-progress
+
+          echo "SBOM generated: ${SAFE_NAME}-sbom.json"
+          ls -lh "${SAFE_NAME}-sbom.json"
+
+      - name: Validate SBOM for ${{ matrix.package.name }}
+        run: |
+          echo "Validating SBOM for ${{ matrix.package.name }}..."
+
+          SAFE_NAME=$(echo "${{ matrix.package.name }}" | tr '/' '-')
+
+          nix run .#validate-spdx -- "${SAFE_NAME}-sbom.json"
+
+          if [ $? -ne 0 ]; then
+            echo "ERROR: SBOM validation failed for ${{ matrix.package.name }}"
+            exit 1
+          fi
+
+          echo "✓ SBOM validation passed for ${{ matrix.package.name }}"
+
+  summary:
+    name: Validation Summary
+    runs-on: ubuntu-24.04-arm
+    needs: validate-sboms
+    if: always()
+    steps:
+      - name: Check validation results
+        run: |
+          if [ "${{ needs.validate-sboms.result }}" != "success" ]; then
+            echo "❌ One or more SBOM validations failed"
+            exit 1
+          fi
+          echo "✅ All SBOM validations passed"
