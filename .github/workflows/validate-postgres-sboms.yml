@@ -1,0 +1,103 @@
+name: Validate Postgres SBOMs
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-sboms:
+    name: Generate and Validate Postgres SBOMs
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres:
+          - name: psql_17
+            target: github:supabase/postgres#psql_17/bin
+            output: pg17
+          - name: psql_15
+            target: github:supabase/postgres#psql_15/bin
+            output: pg15
+          - name: psql_orioledb-17
+            target: github:supabase/postgres#psql_orioledb-17/bin
+            output: pg-orioledb-17
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        if: ${{ github.secret_source == 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Install Nix (fallback)
+        uses: cachix/install-nix-action@v27
+        if: ${{ github.secret_source != 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Build Postgres ${{ matrix.postgres.name }}
+        run: |
+          echo "Building ${{ matrix.postgres.name }}..."
+          nix build ${{ matrix.postgres.target }} -o ${{ matrix.postgres.output }}
+
+          echo "Verifying build output..."
+          ls -lah ${{ matrix.postgres.output }}
+
+      - name: Generate merged SBOM for ${{ matrix.postgres.name }}
+        run: |
+          echo "Generating SBOM for ${{ matrix.postgres.name }}..."
+          nix run .#sbom-generator -- \
+            --nix-target ./${{ matrix.postgres.output }} \
+            --output ${{ matrix.postgres.name }}-sbom.json \
+            --no-progress
+
+          echo "SBOM generated: ${{ matrix.postgres.name }}-sbom.json"
+          ls -lh ${{ matrix.postgres.name }}-sbom.json
+
+      - name: Validate SBOM for ${{ matrix.postgres.name }}
+        run: |
+          echo "Validating SBOM for ${{ matrix.postgres.name }}..."
+          nix run .#validate-spdx -- ${{ matrix.postgres.name }}-sbom.json
+
+          if [ $? -ne 0 ]; then
+            echo "ERROR: SBOM validation failed for ${{ matrix.postgres.name }}"
+            exit 1
+          fi
+
+          echo "✓ SBOM validation passed for ${{ matrix.postgres.name }}"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.postgres.name }}-sbom
+          path: ${{ matrix.postgres.name }}-sbom.json
+          retention-days: 30
+
+  summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: validate-sboms
+    if: always()
+    steps:
+      - name: Check validation results
+        run: |
+          if [ "${{ needs.validate-sboms.result }}" != "success" ]; then
+            echo "❌ One or more SBOM validations failed"
+            exit 1
+          fi
+          echo "✅ All SBOM validations passed"
