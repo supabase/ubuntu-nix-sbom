@@ -10,22 +10,64 @@ on:
   workflow_dispatch:
 
 jobs:
+  discover-packages:
+    name: Discover Postgres Packages
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      packages: ${{ steps.discover.outputs.packages }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        if: ${{ github.secret_source == 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Install Nix (fallback)
+        uses: cachix/install-nix-action@v27
+        if: ${{ github.secret_source != 'Actions' }}
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.29.1/install
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
+            trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Discover packages from flake
+        id: discover
+        run: |
+          echo "Discovering packages from github:supabase/postgres..."
+
+          # Get all packages from the flake
+          nix flake show github:supabase/postgres --json > flake-info.json
+
+          # Extract package names, filter out psql_*/exts/* pattern
+          # Format: {"name": "package-name", "path": "package/path"}
+          PACKAGES=$(cat flake-info.json | jq -r '
+            .packages."aarch64-linux" // {} |
+            keys[] |
+            select(. | contains("/exts/") | not) |
+            {name: ., path: .}
+          ' | jq -sc .)
+
+          echo "Found packages:"
+          echo "$PACKAGES" | jq -r '.[] | .name'
+
+          # Set output for matrix
+          echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+
   validate-sboms:
     name: Generate and Validate Postgres SBOMs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    needs: discover-packages
     strategy:
       fail-fast: false
       matrix:
-        postgres:
-          - name: psql_17
-            target: github:supabase/postgres#psql_17/bin
-            output: pg17
-          - name: psql_15
-            target: github:supabase/postgres#psql_15/bin
-            output: pg15
-          - name: psql_orioledb-17
-            target: github:supabase/postgres#psql_orioledb-17/bin
-            output: pg-orioledb-17
+        package: ${{ fromJson(needs.discover-packages.outputs.packages) }}
 
     steps:
       - name: Checkout code
@@ -49,48 +91,55 @@ jobs:
             substituters = https://cache.nixos.org https://nix-postgres-artifacts.s3.amazonaws.com
             trusted-public-keys = nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-      - name: Build Postgres ${{ matrix.postgres.name }}
+      - name: Build Postgres ${{ matrix.package.name }}
         run: |
-          echo "Building ${{ matrix.postgres.name }}..."
-          nix build ${{ matrix.postgres.target }} -o ${{ matrix.postgres.output }}
+          echo "Building ${{ matrix.package.name }}..."
+          nix build github:supabase/postgres#${{ matrix.package.path }} -o build-output
 
           echo "Verifying build output..."
-          ls -lah ${{ matrix.postgres.output }}
+          ls -lah build-output
 
-      - name: Generate merged SBOM for ${{ matrix.postgres.name }}
+      - name: Generate merged SBOM for ${{ matrix.package.name }}
         run: |
-          echo "Generating SBOM for ${{ matrix.postgres.name }}..."
+          echo "Generating SBOM for ${{ matrix.package.name }}..."
+
+          # Sanitize package name for filename (replace / with -)
+          SAFE_NAME=$(echo "${{ matrix.package.name }}" | tr '/' '-')
+
           nix run .#sbom-generator -- \
-            --nix-target ./${{ matrix.postgres.output }} \
-            --output ${{ matrix.postgres.name }}-sbom.json \
+            --nix-target ./build-output \
+            --output "${SAFE_NAME}-sbom.json" \
             --no-progress
 
-          echo "SBOM generated: ${{ matrix.postgres.name }}-sbom.json"
-          ls -lh ${{ matrix.postgres.name }}-sbom.json
+          echo "SBOM generated: ${SAFE_NAME}-sbom.json"
+          ls -lh "${SAFE_NAME}-sbom.json"
 
-      - name: Validate SBOM for ${{ matrix.postgres.name }}
+      - name: Validate SBOM for ${{ matrix.package.name }}
         run: |
-          echo "Validating SBOM for ${{ matrix.postgres.name }}..."
-          nix run .#validate-spdx -- ${{ matrix.postgres.name }}-sbom.json
+          echo "Validating SBOM for ${{ matrix.package.name }}..."
+
+          SAFE_NAME=$(echo "${{ matrix.package.name }}" | tr '/' '-')
+
+          nix run .#validate-spdx -- "${SAFE_NAME}-sbom.json"
 
           if [ $? -ne 0 ]; then
-            echo "ERROR: SBOM validation failed for ${{ matrix.postgres.name }}"
+            echo "ERROR: SBOM validation failed for ${{ matrix.package.name }}"
             exit 1
           fi
 
-          echo "✓ SBOM validation passed for ${{ matrix.postgres.name }}"
+          echo "✓ SBOM validation passed for ${{ matrix.package.name }}"
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ matrix.postgres.name }}-sbom
-          path: ${{ matrix.postgres.name }}-sbom.json
+          name: ${{ matrix.package.name }}-sbom
+          path: "*-sbom.json"
           retention-days: 30
 
   summary:
     name: Validation Summary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: validate-sboms
     if: always()
     steps:
